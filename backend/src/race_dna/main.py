@@ -1,14 +1,28 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from race_dna import __version__
+from race_dna.database import get_db_session
 
 
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     version: str
+
+
+class ReadinessResponse(BaseModel):
+    status: Literal["ready"]
+    database: Literal["ok"]
+
+
+DatabaseSession = Annotated[
+    AsyncSession,
+    Depends(get_db_session),
+]
 
 
 app = FastAPI(
@@ -25,3 +39,15 @@ app = FastAPI(
 )
 async def health() -> HealthResponse:
     return HealthResponse(status="ok", version=__version__)
+
+
+@app.get(
+    "/api/v1/health/ready",
+    response_model=ReadinessResponse,
+    tags=["health"],
+)
+async def readiness(
+    session: DatabaseSession,
+) -> ReadinessResponse:
+    await session.execute(text("SELECT 1"))
+    return ReadinessResponse(status="ready", database="ok")
