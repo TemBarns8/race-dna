@@ -1,0 +1,163 @@
+from dataclasses import dataclass
+from uuid import uuid4
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from race_dna.db.models import (
+    Driver,
+    DriverRaceResult,
+    Race,
+    Season,
+)
+from race_dna.integrations.jolpica.client import JolpicaClient
+
+
+class DriverNotSynchronizedError(LookupError):
+    pass
+
+
+@dataclass(frozen=True)
+class RaceResultsSyncSummary:
+    received: int
+    seasons_created: int
+    races_created: int
+    results_created: int
+    results_updated: int
+
+
+async def sync_driver_results(
+    session: AsyncSession,
+    client: JolpicaClient,
+    driver_id: str,
+) -> RaceResultsSyncSummary:
+    slug = driver_id.replace("_", "-")
+
+    driver_result = await session.execute(
+        select(Driver).where(Driver.slug == slug)
+    )
+    driver = driver_result.scalar_one_or_none()
+
+    if driver is None:
+        raise DriverNotSynchronizedError(
+            f"Synchronize driver '{driver_id}' first."
+        )
+
+    source_races = await client.get_driver_results(driver_id)
+
+    seasons = {
+        season.year: season
+        for season in (
+            await session.execute(select(Season))
+        ).scalars()
+    }
+    races = {
+        (race.season_year, race.round): race
+        for race in (
+            await session.execute(select(Race))
+        ).scalars()
+    }
+    existing_results = {
+        result.race_id: result
+        for result in (
+            await session.execute(
+                select(DriverRaceResult).where(
+                    DriverRaceResult.driver_id == driver.id
+                )
+            )
+        ).scalars()
+    }
+
+    seasons_created = 0
+    races_created = 0
+    results_created = 0
+    results_updated = 0
+
+    # Phase 1: create seasons.
+    for source_race in source_races:
+        if source_race.season not in seasons:
+            season = Season(year=source_race.season)
+            session.add(season)
+            seasons[source_race.season] = season
+            seasons_created += 1
+
+    await session.flush()
+
+    # Phase 2: create or update races.
+    for source_race in source_races:
+        race_key = (source_race.season, source_race.round)
+        race = races.get(race_key)
+
+        race_values = {
+            "name": source_race.race_name,
+            "date": source_race.date,
+            "circuit_id": source_race.circuit.circuit_id,
+            "circuit_name": source_race.circuit.circuit_name,
+            "locality": source_race.circuit.location.locality,
+            "country": source_race.circuit.location.country,
+        }
+
+        if race is None:
+            race = Race(
+                id=uuid4(),
+                season_year=source_race.season,
+                round=source_race.round,
+                **race_values,
+            )
+            session.add(race)
+            races[race_key] = race
+            races_created += 1
+        else:
+            for field, value in race_values.items():
+                setattr(race, field, value)
+
+    await session.flush()
+
+    # Phase 3: create or update driver results.
+    for source_race in source_races:
+        race_key = (source_race.season, source_race.round)
+        race = races[race_key]
+
+        if not source_race.results:
+            continue
+
+        source_result = source_race.results[0]
+        result = existing_results.get(race.id)
+
+        result_values = {
+            "car_number": source_result.number,
+            "finish_position": source_result.position,
+            "position_text": source_result.position_text,
+            "grid_position": source_result.grid,
+            "points": source_result.points,
+            "laps": source_result.laps,
+            "status": source_result.status,
+            "constructor_id": (
+                source_result.constructor.constructor_id
+            ),
+            "constructor_name": source_result.constructor.name,
+        }
+
+        if result is None:
+            result = DriverRaceResult(
+                driver_id=driver.id,
+                race_id=race.id,
+                **result_values,
+            )
+            session.add(result)
+            existing_results[race.id] = result
+            results_created += 1
+        else:
+            for field, value in result_values.items():
+                setattr(result, field, value)
+            results_updated += 1
+
+    await session.commit()
+
+    return RaceResultsSyncSummary(
+        received=len(source_races),
+        seasons_created=seasons_created,
+        races_created=races_created,
+        results_created=results_created,
+        results_updated=results_updated,
+    )

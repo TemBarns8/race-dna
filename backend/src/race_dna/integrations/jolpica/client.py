@@ -6,7 +6,10 @@ from race_dna.integrations.jolpica.schemas import (
     JolpicaDriver,
     JolpicaDriverResponse,
 )
-
+from race_dna.integrations.jolpica.race_results import (
+    JolpicaRace,
+    JolpicaRaceResultsResponse,
+)
 
 class JolpicaDriverNotFoundError(LookupError):
     pass
@@ -57,3 +60,40 @@ class JolpicaClient:
             )
 
         return drivers[0]
+    async def get_driver_results(
+        self,
+        driver_id: str,
+        page_size: int = 100,
+    ) -> list[JolpicaRace]:
+        races: list[JolpicaRace] = []
+        offset = 0
+
+        async with httpx2.AsyncClient(
+            base_url=self._base_url,
+            timeout=self._timeout_seconds,
+            headers={"User-Agent": f"race-dna/{__version__}"},
+        ) as client:
+            while True:
+                response = await client.get(
+                    f"drivers/{driver_id}/results.json",
+                    params={
+                        "limit": page_size,
+                        "offset": offset,
+                    },
+                )
+                response.raise_for_status()
+
+                parsed = (
+                    JolpicaRaceResultsResponse.model_validate(
+                        response.json()
+                    )
+                )
+                page = parsed.mr_data.race_table.races
+                races.extend(page)
+
+                if not page or len(races) >= parsed.mr_data.total:
+                    break
+
+                offset += len(page)
+
+        return races
