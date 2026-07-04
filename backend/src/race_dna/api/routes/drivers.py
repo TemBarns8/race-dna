@@ -1,14 +1,14 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from race_dna.database import get_db_session
-from race_dna.db.models import Driver
+from race_dna.db.models import Driver, DriverRaceResult, Race
 from race_dna.schemas.driver import DriverCreate, DriverRead
-
+from race_dna.schemas.season import SeasonStats
 
 router = APIRouter(
     prefix="/drivers",
@@ -66,3 +66,53 @@ async def get_driver(
         )
 
     return driver
+
+@router.get(
+    "/{slug}/seasons",
+    response_model=list[SeasonStats],
+)
+async def get_driver_seasons(
+    slug: str,
+    session: DatabaseSession,
+) -> list[SeasonStats]:
+    driver_result = await session.execute(
+        select(Driver).where(Driver.slug == slug)
+    )
+    driver = driver_result.scalar_one_or_none()
+
+    if driver is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Driver '{slug}' was not found.",
+        )
+
+    stats_result = await session.execute(
+        select(
+            Race.season_year.label("season"),
+            func.count(DriverRaceResult.id).label("races"),
+            func.count(DriverRaceResult.id)
+            .filter(DriverRaceResult.finish_position == 1)
+            .label("wins"),
+            func.count(DriverRaceResult.id)
+            .filter(DriverRaceResult.finish_position <= 3)
+            .label("podiums"),
+            func.count(DriverRaceResult.id)
+            .filter(DriverRaceResult.grid_position == 1)
+            .label("p1_starts"),
+            func.sum(DriverRaceResult.points).label(
+                "race_points"
+            ),
+        )
+        .join(
+            Race,
+            Race.id == DriverRaceResult.race_id,
+        )
+        .where(DriverRaceResult.driver_id == driver.id)
+        .group_by(Race.season_year)
+        .order_by(Race.season_year)
+    )
+
+    return [
+        SeasonStats.model_validate(row._mapping)
+        for row in stats_result
+    ]
