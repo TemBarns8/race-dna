@@ -17,8 +17,3 @@ stops into transparent and versioned driver metrics.
 ## Current status
 
 The project is in the early MVP development stage.
-
-## Disclaimer
-
-Race DNA is an unofficial project and is not affiliated with Formula 1, the FIA,
-any Formula 1 team, or any driver.
