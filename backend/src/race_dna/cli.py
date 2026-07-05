@@ -1,6 +1,9 @@
 import argparse
 import asyncio
 
+from race_dna.ingestion.qualifying_results import (
+    sync_driver_qualifying_results,
+)
 from race_dna.database import (
     async_session_factory,
     engine,
@@ -45,6 +48,26 @@ async def run_sync_results(driver_id: str) -> None:
     finally:
         await engine.dispose()
 
+async def run_sync_qualifying(driver_id: str) -> None:
+    try:
+        async with async_session_factory() as session:
+            summary = await sync_driver_qualifying_results(
+                session=session,
+                client=JolpicaClient(),
+                driver_id=driver_id,
+            )
+
+        print(f"received={summary.received}")
+        print(f"seasons_created={summary.seasons_created}")
+        print(f"races_created={summary.races_created}")
+        print(
+            f"qualifying_created={summary.qualifying_created}"
+        )
+        print(
+            f"qualifying_updated={summary.qualifying_updated}"
+        )
+    finally:
+        await engine.dispose()
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -68,13 +91,20 @@ def main() -> None:
     )
     sync_results_parser.add_argument("driver_id")
 
+    sync_qualifying_parser = subparsers.add_parser(
+        "sync-qualifying",
+        help="Synchronize driver qualifying results from Jolpica.",
+    )
+    sync_qualifying_parser.add_argument("driver_id")
+
     args = parser.parse_args()
 
     if args.command == "sync-driver":
         asyncio.run(run_sync_driver(args.driver_id))
     elif args.command == "sync-results":
         asyncio.run(run_sync_results(args.driver_id))
-
+    elif args.command == "sync-qualifying":
+        asyncio.run(run_sync_qualifying(args.driver_id))
 
 if __name__ == "__main__":
     main()
