@@ -1,5 +1,9 @@
 import httpx2
 
+from race_dna.integrations.jolpica.qualifying_results import (
+    JolpicaQualifyingRace,
+    JolpicaQualifyingResponse,
+)
 from race_dna import __version__
 from race_dna.config import get_settings
 from race_dna.integrations.jolpica.schemas import (
@@ -87,6 +91,42 @@ class JolpicaClient:
                     JolpicaRaceResultsResponse.model_validate(
                         response.json()
                     )
+                )
+                page = parsed.mr_data.race_table.races
+                races.extend(page)
+
+                if not page or len(races) >= parsed.mr_data.total:
+                    break
+
+                offset += len(page)
+
+        return races
+
+    async def get_driver_qualifying_results(
+        self,
+        driver_id: str,
+        page_size: int = 100,
+    ) -> list[JolpicaQualifyingRace]:
+        races: list[JolpicaQualifyingRace] = []
+        offset = 0
+
+        async with httpx2.AsyncClient(
+            base_url=self._base_url,
+            timeout=self._timeout_seconds,
+            headers={"User-Agent": f"race-dna/{__version__}"},
+        ) as client:
+            while True:
+                response = await client.get(
+                    f"drivers/{driver_id}/qualifying.json",
+                    params={
+                        "limit": page_size,
+                        "offset": offset,
+                    },
+                )
+                response.raise_for_status()
+
+                parsed = JolpicaQualifyingResponse.model_validate(
+                    response.json()
                 )
                 page = parsed.mr_data.race_table.races
                 races.extend(page)
