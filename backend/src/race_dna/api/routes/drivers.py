@@ -6,7 +6,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from race_dna.database import get_db_session
-from race_dna.db.models import Driver, DriverRaceResult, Race
+from race_dna.db.models import (
+    Driver,
+    DriverQualifyingResult,
+    DriverRaceResult,
+    Race,
+)
 from race_dna.schemas.driver import DriverCreate, DriverRead
 from race_dna.schemas.season import SeasonStats
 from race_dna.schemas.race import DriverRaceResultRead
@@ -87,7 +92,7 @@ async def get_driver_seasons(
             detail=f"Driver '{slug}' was not found.",
         )
 
-    stats_result = await session.execute(
+    race_stats_result = await session.execute(
         select(
             Race.season_year.label("season"),
             func.count(DriverRaceResult.id).label("races"),
@@ -104,19 +109,78 @@ async def get_driver_seasons(
                 "race_points"
             ),
         )
+        .select_from(DriverRaceResult)
         .join(
             Race,
             Race.id == DriverRaceResult.race_id,
         )
         .where(DriverRaceResult.driver_id == driver.id)
         .group_by(Race.season_year)
-        .order_by(Race.season_year)
     )
 
-    return [
-        SeasonStats.model_validate(row._mapping)
-        for row in stats_result
-    ]
+    qualifying_stats_result = await session.execute(
+        select(
+            Race.season_year.label("season"),
+            func.count(DriverQualifyingResult.id).label(
+                "qualifying_sessions"
+            ),
+            func.count(DriverQualifyingResult.id)
+            .filter(DriverQualifyingResult.position == 1)
+            .label("poles"),
+        )
+        .select_from(DriverQualifyingResult)
+        .join(
+            Race,
+            Race.id == DriverQualifyingResult.race_id,
+        )
+        .where(
+            DriverQualifyingResult.driver_id == driver.id
+        )
+        .group_by(Race.season_year)
+    )
+
+    race_stats_by_season = {
+        row._mapping["season"]: dict(row._mapping)
+        for row in race_stats_result
+    }
+    qualifying_stats_by_season = {
+        row._mapping["season"]: dict(row._mapping)
+        for row in qualifying_stats_result
+    }
+
+    seasons = sorted(
+        set(race_stats_by_season)
+        | set(qualifying_stats_by_season)
+    )
+
+    statistics = []
+
+    for season in seasons:
+        race_values = race_stats_by_season.get(season, {})
+        qualifying_values = qualifying_stats_by_season.get(
+            season,
+            {},
+        )
+
+        statistics.append(
+            SeasonStats(
+                season=season,
+                races=race_values.get("races", 0),
+                wins=race_values.get("wins", 0),
+                podiums=race_values.get("podiums", 0),
+                qualifying_sessions=qualifying_values.get(
+                    "qualifying_sessions",
+                    0,
+                ),
+                poles=qualifying_values.get("poles", 0),
+                p1_starts=race_values.get("p1_starts", 0),
+                race_points=float(
+                    race_values.get("race_points") or 0
+                ),
+            )
+        )
+
+    return statistics
 
 @router.get(
     "/{slug}/races",
