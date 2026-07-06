@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from race_dna import __version__
 from race_dna.database import get_db_session
+from race_dna.api.routes.dna import router as dna_router
 
 from race_dna.api.routes.drivers import router as drivers_router
 
@@ -30,6 +31,11 @@ app = FastAPI(
     title="Race DNA API",
     version=__version__,
     description="Explainable Formula 1 driver analytics API.",
+)
+
+app.include_router(
+    dna_router,
+    prefix="/api/v1",
 )
 
 app.include_router(
