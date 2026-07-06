@@ -19,3 +19,16 @@ class ConsistencyIndexRead(BaseModel):
     completed_races: int = Field(ge=0)
     median_finish: float | None
     components: list[MetricComponentRead]
+
+
+class OvertakeIndexRead(BaseModel):
+    season: int = Field(ge=1950)
+    metric: str
+    methodology_version: str
+    proxy: bool
+    score: float = Field(ge=0, le=100)
+    sample_size: int = Field(ge=1)
+    eligible_races: int = Field(ge=1)
+    total_positions_gained: int = Field(ge=0)
+    total_available_positions: int = Field(ge=1)
+    components: list[MetricComponentRead]
